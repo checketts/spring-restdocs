@@ -64,6 +64,7 @@ import org.springframework.web.context.WebApplicationContext
 import com.fasterxml.jackson.databind.ObjectMapper
 import cz.petrbalat.spring.mvc.test.dsl.DslRequestBuilder
 import cz.petrbalat.spring.mvc.test.dsl.performGet
+import cz.petrbalat.spring.mvc.test.dsl.performPatch
 import cz.petrbalat.spring.mvc.test.dsl.performPost
 import org.springframework.restdocs.headers.HeaderDescriptor
 import org.springframework.restdocs.hypermedia.LinkDescriptor
@@ -71,6 +72,7 @@ import org.springframework.restdocs.mockmvc.MockMvcRestDocumentation
 import org.springframework.restdocs.payload.SubsectionDescriptor
 import org.springframework.restdocs.snippet.Snippet
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
+import kotlin.math.exp
 
 @RunWith(SpringRunner::class)
 @SpringBootTest
@@ -289,12 +291,12 @@ class ApiDocumentation {
                 contentType(MediaTypes.HAL_JSON)
                 content(objectMapper.writeValueAsString(note))
             }
-            expect {status { isCreated }}
+            expect { status { isCreated } }
             document(documentationHandler) {
                 request {
-                    "title" field {description("The title of the note").withContraints<NoteInput>()}
-                    "body" field {description("The body of the note").withContraints<NoteInput>()}
-                    "tags" field {description("An array of tag resource URIs").withContraints<NoteInput>()}
+                    "title" field { description("The title of the note").withContraints<NoteInput>() }
+                    "body" field { description("The body of the note").withContraints<NoteInput>() }
+                    "tags" field { description("An array of tag resource URIs").withContraints<NoteInput>() }
                 }
             }
         }
@@ -302,48 +304,50 @@ class ApiDocumentation {
 
     @Test
     fun noteGetExample() {
-        val tag = HashMap<String, String>()
-        tag["name"] = "REST"
+        val tag = mapOf("name" to "REST")
 
-        val tagLocation = this.mockMvc
-                .perform(post("/tags")
-                        .contentType(MediaTypes.HAL_JSON)
-                        .content(this.objectMapper.writeValueAsString(tag)))
-                .andExpect(status().isCreated)
-                .andReturn().response.getHeader("Location")
+        val tagLocation = this.mockMvc.performPost("/tags") {
+            builder {
+                contentType(MediaTypes.HAL_JSON)
+                content(objectMapper.writeValueAsString(tag))
+            }
+            expect { status { isCreated } }
+        }.response.getHeader("Location")
 
-        val note = HashMap<String, Any>()
-        note["title"] = "REST maturity model"
-        note["body"] = "http://martinfowler.com/articles/richardsonMaturityModel.html"
-        note["tags"] = Arrays.asList(tagLocation)
+        val note = mapOf("title" to "REST maturity model",
+                "body" to "http://martinfowler.com/articles/richardsonMaturityModel.html",
+                "tags" to Arrays.asList(tagLocation))
 
-        val noteLocation = this.mockMvc
-                .perform(post("/notes")
-                        .contentType(MediaTypes.HAL_JSON)
-                        .content(this.objectMapper.writeValueAsString(note)))
-                .andExpect(status().isCreated)
-                .andReturn().response.getHeader("Location")
+        val noteLocation = this.mockMvc.performPost("/notes") {
+            builder {
+                contentType(MediaTypes.HAL_JSON)
+                content(objectMapper.writeValueAsString(note))
+            }
+            expect { status { isCreated } }
+        }.response.getHeader("Location")!!
 
-        this.mockMvc
-                .perform(get(noteLocation))
-                .andExpect(status().isOk)
-                .andExpect(jsonPath("title", `is`<Any>(note["title"])))
-                .andExpect(jsonPath("body", `is`<Any>(note["body"])))
-                .andExpect(jsonPath("_links.self.href", `is`<String>(noteLocation)))
-                .andExpect(jsonPath("_links.note-tags", `is`(notNullValue())))
-                .andDo(this.documentationHandler.document(
-                        links(
-                                linkWithRel("self").description("This <<resources-note,note>>"),
-                                linkWithRel("note-tags").description("This note's <<resources-note-tags,tags>>")),
-                        responseFields(
-                                fieldWithPath("title").description("The title of the note"),
-                                fieldWithPath("body").description("The body of the note"),
-                                subsectionWithPath("_links").description("<<resources-note-links,Links>> to other resources"))))
+        this.mockMvc.performGet(noteLocation) {
+            expect {
+                status { isOk }
+                "title" jsonPathIs note["title"]!!
+                "body" jsonPathIs note["body"]!!
+                "_links.self.href" jsonPathIs noteLocation
+                jsonPath("_links.note-tags") { value(`is`(notNullValue())) }
+            }
 
+            document(documentationHandler) {
+                "self" link { description("This <<resources-note,note>>") }
+                "note-tags" link { description("This note's <<resources-note-tags,tags>>") }
+                response {
+                    "title" field { description("The title of the note") }
+                    "body" field { description("The body of the note") }
+                    "_links" subsection { description("<<resources-note-links,Links>> to other resources") }
+                }
+            }
+        }
     }
 
     @Test
-    @Throws(Exception::class)
     fun tagsListExample() {
         this.noteRepository.deleteAll()
         this.tagRepository.deleteAll()
@@ -352,140 +356,151 @@ class ApiDocumentation {
         createTag("Hypermedia")
         createTag("HTTP")
 
-        this.mockMvc
-                .perform(get("/tags"))
-                .andExpect(status().isOk)
-                .andDo(this.documentationHandler.document(
-                        responseFields(
-                                subsectionWithPath("_embedded.tags").description("An array of <<resources-tag,Tag resources>>"))))
+        this.mockMvc.performGet("/tags") {
+            expect { status { isOk } }
+            document(documentationHandler) {
+                response {
+                    "_embedded.tags" subsection { description("An array of <<resources-tag,Tag resources>>") }
+                }
+            }
+        }
     }
 
     @Test
-    @Throws(Exception::class)
     fun tagsCreateExample() {
-        val tag = HashMap<String, String>()
-        tag["name"] = "REST"
+        val tag = mapOf("name" to "REST")
 
-        val fields = ConstrainedFields(TagInput::class.java)
-
-        this.mockMvc
-                .perform(post("/tags")
-                        .contentType(MediaTypes.HAL_JSON)
-                        .content(this.objectMapper.writeValueAsString(tag)))
-                .andExpect(status().isCreated)
-                .andDo(this.documentationHandler.document(
-                        requestFields(
-                                fields.withPath("name").description("The name of the tag"))))
+        this.mockMvc.performPost("/tags") {
+            builder {
+                contentType(MediaTypes.HAL_JSON)
+                content(objectMapper.writeValueAsString(tag))
+            }
+            expect { status { isCreated } }
+            document(documentationHandler) {
+                request {
+                    "name" field { description("The name of the tag").withContraints<TagInput>() }
+                }
+            }
+        }
     }
 
     @Test
-    @Throws(Exception::class)
     fun noteUpdateExample() {
-        val note = HashMap<String, Any>()
-        note["title"] = "REST maturity model"
-        note["body"] = "http://martinfowler.com/articles/richardsonMaturityModel.html"
+        val note = mapOf("title" to "REST maturity model",
+                "body" to "http://martinfowler.com/articles/richardsonMaturityModel.html"
+        )
 
-        val noteLocation = this.mockMvc
-                .perform(post("/notes")
-                        .contentType(MediaTypes.HAL_JSON)
-                        .content(this.objectMapper.writeValueAsString(note)))
-                .andExpect(status().isCreated)
-                .andReturn().response.getHeader("Location")
 
-        this.mockMvc
-                .perform(get(noteLocation))
-                .andExpect(status().isOk)
-                .andExpect(jsonPath("title", `is`<Any>(note["title"])))
-                .andExpect(jsonPath("body", `is`<Any>(note["body"])))
-                .andExpect(jsonPath("_links.self.href", `is`<String>(noteLocation)))
-                .andExpect(jsonPath("_links.note-tags", `is`(notNullValue())))
+        val noteLocation = this.mockMvc.performPost("/notes") {
+            builder {
+                contentType(MediaTypes.HAL_JSON)
+                content(objectMapper.writeValueAsString(note))
+            }
+            expect { status { isCreated } }
+        }.response.getHeader("Location")!!
 
-        val tag = HashMap<String, String>()
-        tag["name"] = "REST"
+        this.mockMvc.performGet(noteLocation) {
+            expect {
+                status { isOk }
+                "title" jsonPathIs note["title"]!!
+                "body" jsonPathIs note["body"]!!
+                "_links.self.href" jsonPathIs noteLocation
+                jsonPath("_links.note-tags") { value(`is`(notNullValue())) }
+            }
+        }
 
-        val tagLocation = this.mockMvc
-                .perform(post("/tags")
-                        .contentType(MediaTypes.HAL_JSON)
-                        .content(this.objectMapper.writeValueAsString(tag)))
-                .andExpect(status().isCreated)
-                .andReturn().response.getHeader("Location")
 
-        val noteUpdate = HashMap<String, Any>()
-        noteUpdate["tags"] = Arrays.asList(tagLocation)
+        val tag = mapOf("name" to "REST")
 
-        val fields = ConstrainedFields(NotePatchInput::class.java)
+        val tagLocation = this.mockMvc.performPost("/tags") {
+            builder {
+                contentType(MediaTypes.HAL_JSON)
+                content(objectMapper.writeValueAsString(tag))
+            }
+            expect { status { isCreated } }
+        }.response.getHeader("Location")
 
-        this.mockMvc
-                .perform(patch(noteLocation)
-                        .contentType(MediaTypes.HAL_JSON)
-                        .content(this.objectMapper.writeValueAsString(noteUpdate)))
-                .andExpect(status().isNoContent)
-                .andDo(this.documentationHandler.document(
-                        requestFields(
-                                fields.withPath("title")
-                                        .description("The title of the note")
-                                        .type(JsonFieldType.STRING)
-                                        .optional(),
-                                fields.withPath("body")
-                                        .description("The body of the note")
-                                        .type(JsonFieldType.STRING)
-                                        .optional(),
-                                fields.withPath("tags")
-                                        .description("An array of tag resource URIs"))))
+        val noteUpdate = mapOf("tags" to listOf(tagLocation))
+
+        this.mockMvc.performPatch(noteLocation) {
+            builder {
+                contentType(MediaTypes.HAL_JSON)
+                content(objectMapper.writeValueAsString(noteUpdate))
+            }
+            expect { status { isNoContent } }
+            document(documentationHandler) {
+                request {
+                    "title" field {
+                        description("The title of the note")
+                        type(JsonFieldType.STRING)
+                        optional()
+                        withContraints<NotePatchInput>()
+                    }
+                    "body" field {
+                        description("The body of the note")
+                        type(JsonFieldType.STRING)
+                        optional()
+                        withContraints<NotePatchInput>()
+                    }
+                    "tags" field { description("An array of tag resource URIs").withContraints<NotePatchInput>() }
+                }
+            }
+        }
     }
 
     @Test
-    @Throws(Exception::class)
     fun tagGetExample() {
-        val tag = HashMap<String, String>()
-        tag["name"] = "REST"
+        val tag = mapOf("name" to "REST")
 
-        val tagLocation = this.mockMvc
-                .perform(post("/tags")
-                        .contentType(MediaTypes.HAL_JSON)
-                        .content(this.objectMapper.writeValueAsString(tag)))
-                .andExpect(status().isCreated)
-                .andReturn().response.getHeader("Location")
+        val tagLocation = this.mockMvc.performPost("/tags") {
+            builder {
+                contentType(MediaTypes.HAL_JSON)
+                content(objectMapper.writeValueAsString(tag))
+            }
+            expect { status { isCreated } }
+        }.response.getHeader("Location")!!
 
-        this.mockMvc
-                .perform(get(tagLocation))
-                .andExpect(status().isOk)
-                .andExpect(jsonPath("name", `is`<String>(tag["name"])))
-                .andDo(this.documentationHandler.document(
-                        links(
-                                linkWithRel("self").description("This <<resources-tag,tag>>"),
-                                linkWithRel("tagged-notes").description("The <<resources-tagged-notes,notes>> that have this tag")),
-                        responseFields(
-                                fieldWithPath("name").description("The name of the tag"),
-                                subsectionWithPath("_links").description("<<resources-tag-links,Links>> to other resources"))))
+        this.mockMvc.performGet(tagLocation) {
+            expect {
+                status { isOk }
+                "name" jsonPathIs tag["name"]!!
+            }
+
+            document(documentationHandler) {
+                "self" link {description("This <<resources-tag,tag>>")}
+                "tagged-notes" link {description("The <<resources-tagged-notes,notes>> that have this tag")}
+                response {
+                    "name" field {description("The name of the tag")}
+                    "_links" subsection {description("<<resources-tag-links,Links>> to other resources")}
+                }
+            }
+        }
     }
 
     @Test
-    @Throws(Exception::class)
     fun tagUpdateExample() {
-        val tag = HashMap<String, String>()
-        tag["name"] = "REST"
+        val tag = mapOf("name" to "REST")
 
-        val tagLocation = this.mockMvc
-                .perform(post("/tags")
-                        .contentType(MediaTypes.HAL_JSON)
-                        .content(this.objectMapper.writeValueAsString(tag)))
-                .andExpect(status().isCreated)
-                .andReturn().response.getHeader("Location")
+        val tagLocation = this.mockMvc.performPost("/tags") {
+            builder {
+                contentType(MediaTypes.HAL_JSON)
+                content(objectMapper.writeValueAsString(tag))
+            }
+            expect { status { isCreated } }
+        }.response.getHeader("Location")!!
 
-        val tagUpdate = HashMap<String, Any>()
-        tagUpdate["name"] = "RESTful"
+        val tagUpdate = mapOf("name" to "RESTful")
 
-        val fields = ConstrainedFields(TagPatchInput::class.java)
-
-        this.mockMvc
-                .perform(patch(tagLocation)
-                        .contentType(MediaTypes.HAL_JSON)
-                        .content(this.objectMapper.writeValueAsString(tagUpdate)))
-                .andExpect(status().isNoContent)
-                .andDo(this.documentationHandler.document(
-                        requestFields(
-                                fields.withPath("name").description("The name of the tag"))))
+        this.mockMvc.performPatch(tagLocation) {
+            builder {
+                contentType(MediaTypes.HAL_JSON)
+                content(objectMapper.writeValueAsString(tagUpdate))
+            }
+            expect { status { isNoContent } }
+            document(documentationHandler) {
+                request { "name" field {description("The name of the tag").withContraints<TagPatchInput>() }}
+            }
+        }
     }
 
     private fun createNote(title: String, body: String) {
@@ -507,20 +522,4 @@ class ApiDocumentation {
                 .collectionToDelimitedString(ConstraintDescriptions(T::class.java)
                         .descriptionsForProperty(path), ". ")))
     }
-
-    private class ConstrainedFields internal constructor(input: Class<*>) {
-
-        private val constraintDescriptions: ConstraintDescriptions
-
-        init {
-            this.constraintDescriptions = ConstraintDescriptions(input)
-        }
-
-        fun withPath(path: String): FieldDescriptor {
-            return fieldWithPath(path).attributes(key("constraints").value(StringUtils
-                    .collectionToDelimitedString(this.constraintDescriptions
-                            .descriptionsForProperty(path), ". ")))
-        }
-    }
-
 }
